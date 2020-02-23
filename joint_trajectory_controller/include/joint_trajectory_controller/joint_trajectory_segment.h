@@ -227,7 +227,7 @@ Scalar wraparoundJointOffset(const Scalar& prev_position,
 
   if (angle_wraparound)
   {
-    Scalar dist = angles::shortest_angular_distance(prev_position, next_position);
+    Scalar dist = next_position - prev_position;
 
     // Deal with singularity at M_PI shortest distance
     if (std::abs(std::abs(dist) - M_PI) < 1e-9)
