@@ -259,18 +259,30 @@ public:
     // Store pointer to joint handles
     joint_handles_ptr_ = &joint_handles;
 
+    loopCount = 0;
+    ratio = 1;
+
     // Initialize PIDs
-    pids_.resize(joint_handles.size());
-    for (unsigned int i = 0; i < pids_.size(); ++i)
+    positionPids_.resize(joint_handles.size());
+    velocityPids_.resize(joint_handles.size());
+    velocityGoals_.resize(joint_handles.size());
+    for (unsigned int i = 0; i < joint_handles.size(); ++i)
     {
       // Node handle to PID gains
-      ros::NodeHandle joint_nh(controller_nh, std::string("gains/") + joint_handles[i].getName());
+      ros::NodeHandle joint_position_nh(controller_nh, std::string("gains/") + joint_handles[i].getName() + std::string("/position"));
+      ros::NodeHandle joint_velocity_nh(controller_nh, std::string("gains/") + joint_handles[i].getName() + std::string("/velocity"));
 
       // Init PID gains from ROS parameter server
-      pids_[i].reset(new control_toolbox::Pid());
-      if (!pids_[i]->init(joint_nh))
+      positionPids_[i].reset(new control_toolbox::Pid());
+      velocityPids_[i].reset(new control_toolbox::Pid());
+      if (!positionPids_[i]->init(joint_position_nh))
       {
-        ROS_WARN_STREAM("Failed to initialize PID gains from ROS parameter server.");
+        ROS_WARN_STREAM("Failed to initialize position PID gains from ROS parameter server.");
+        return false;
+      }
+      if (!velocityPids_[i]->init(joint_velocity_nh))
+      {
+        ROS_WARN_STREAM("Failed to initialize velocity PID gains from ROS parameter server.");
         return false;
       }
     }
@@ -283,9 +295,10 @@ public:
     if (!joint_handles_ptr_) {return;}
 
     // Reset PIDs, zero effort commands
-    for (unsigned int i = 0; i < pids_.size(); ++i)
+    for (unsigned int i = 0; i < positionPids_.size(); ++i)
     {
-      pids_[i]->reset();
+      positionPids_[i]->reset();
+      velocityPids_[i]->reset();
       (*joint_handles_ptr_)[i].setCommand(0.0);
     }
   }
@@ -304,19 +317,32 @@ public:
     assert(n_joints == state_error.position.size());
     assert(n_joints == state_error.velocity.size());
 
-    // Update PIDs
+    // Update velocity PIDs
     for (unsigned int i = 0; i < n_joints; ++i)
     {
-      const double command = pids_[i]->computeCommand(state_error.velocity[i], period);
+      double velocityError = velocityGoals_[i] - (*joint_handles_ptr_)[i].getVelocity();
+      const double command = velocityPids_[i]->computeCommand(velocityError, period);
       (*joint_handles_ptr_)[i].setCommand(command);
     }
+
+    if (loopCount == ratio) {
+        loopCount = 0;
+
+        for (unsigned int i = 0; i < n_joints; ++i)
+          velocityGoals_[i] = positionPids_[i]->computeCommand(state_error.position[i], period);
+    }
+    loopCount++;
   }
 
 private:
   typedef boost::shared_ptr<control_toolbox::Pid> PidPtr;
-  std::vector<PidPtr> pids_;
+  std::vector<PidPtr> velocityPids_;
+  std::vector<PidPtr> positionPids_;
+  std::vector<double> velocityGoals_;
 
   std::vector<hardware_interface::JointHandle>* joint_handles_ptr_;
+  unsigned char loopCount;
+  unsigned char ratio;
 };
 
 #endif // header guard
